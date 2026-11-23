@@ -2,3 +2,5 @@
 invite*.txt
 workers.json
 .env
+__pycache__/
+*.pyc
