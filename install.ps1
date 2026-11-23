@@ -1,43 +1,40 @@
-# oprn-dots worker installer (Windows PowerShell): checks your invite code, prints the connector URL and the standing instructions.
-# Usage:  .\install.ps1            (asks for the invite code)
-#         .\install.ps1 -Code <invite-code>
-# Invite code: dots1.<server address>.<key>. A bare key needs -BaseUrl https://<server address>.
-param([string]$Code = $env:DOTS_INVITE, [string]$BaseUrl = $env:DOTS_BASE_URL)
+# oprn-dots worker installer (Windows PowerShell). One command, no invite code:
+#   powershell -ExecutionPolicy Bypass -File install.ps1 [-Name NAME] [-Contact EMAIL] [-Agent codex|claude] [-NoService]
+# 1) signs up on the queue and saves the key, 2) picks your agent CLI, 3) registers a Task Scheduler task that runs the
+# worker at logon (and restarts it), so it keeps taking jobs after reboots.
+param([string]$Name = "", [string]$Contact = "", [string]$Agent = "", [string]$Origin = "", [switch]$NoService, [switch]$Yes)
 $ErrorActionPreference = 'Stop'
-function Die($m) { Write-Host "오류: $m" -ForegroundColor Red; exit 1 }
+function Die($m) { Write-Host "ERROR: $m" -ForegroundColor Red; exit 1 }
+$Here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$W = Join-Path $Here 'dots_worker.py'
+$Svc = if ($env:DOTS_SERVICE_NAME) { $env:DOTS_SERVICE_NAME } else { 'oprn-dots-worker' }
 
-if (-not $Code) { $sec = Read-Host "초대 코드를 붙여넣고 Enter" -AsSecureString; $Code = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)) }
-$Code = ($Code -replace '\s', '')
-if (-not $Code) { Die "초대 코드가 비어 있습니다." }
+$Py = $null
+foreach ($c in @('py', 'python', 'python3')) { $cmd = Get-Command $c -ErrorAction SilentlyContinue; if ($cmd) { $Py = $cmd.Source; break } }
+if (-not $Py) { Die "Python 3.8+ is required (https://www.python.org/downloads/). Install it and run this again." }
+$PyArgs = @(); if ((Split-Path -Leaf $Py) -like 'py*.exe' -and (Split-Path -Leaf $Py) -notlike 'python*') { $PyArgs = @('-3') }
+if (-not $Name) { $Name = "$env:USERNAME@$env:COMPUTERNAME" }
 
-if ($Code -match '^dots1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9]+)$') {
-  $b = $Matches[1].Replace('_', '/').Replace('-', '+'); while ($b.Length % 4) { $b += '=' }
-  $Origin = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b)); $Key = $Matches[2]
-} else {
-  $Key = $Code; $Origin = $BaseUrl
-  if (-not $Origin) { $Origin = Read-Host "서버 주소(https://... 로 시작)를 입력" }
-}
-$Origin = $Origin.TrimEnd('/')
-if ($Origin -notmatch '^https?://[A-Za-z0-9._:-]+$') { Die "서버 주소 형식이 이상합니다. 초대 코드를 다시 확인해 주세요." }
-if ($Key -notmatch '^[A-Za-z0-9]{16,128}$') { Die "초대 코드 형식이 이상합니다. 끝까지 복사했는지 확인해 주세요." }
+Write-Host "== 1/3 sign up as `"$Name`""
+$a = @('join', '--name', $Name)
+if ($Contact) { $a += @('--contact', $Contact) }; if ($Agent) { $a += @('--agent', $Agent) }; if ($Origin) { $a += @('--origin', $Origin) }
+& $Py @PyArgs $W @a; if ($LASTEXITCODE) { Die "signup failed" }
+$CfgDir = Join-Path $env:APPDATA 'oprn-dots-worker'
 
-Write-Host "서버에 초대 코드를 확인하는 중..."
-try { $r = Invoke-RestMethod -Uri "$Origin/$Key/health" -TimeoutSec 20 } catch { Die "서버가 이 초대 코드를 받아 주지 않습니다. 코드가 틀렸거나, 정지되었거나, 서버에 닿지 않습니다. 보낸 사람에게 확인해 주세요." }
-if (-not $r.ok) { Die "서버 응답이 예상과 다릅니다." }
-Write-Host "확인되었습니다. 일꾼 이름: $($r.worker)"
+Write-Host "== 2/3 check the server and the agent CLI"
+& $Py @PyArgs $W check
+if ($LASTEXITCODE) { Write-Host "WARNING: no usable agent CLI yet. Install codex or claude (logged in), or set agent_command in $CfgDir\config.json. The task is registered anyway." -ForegroundColor Yellow }
+
+if ($NoService) { Write-Host "== 3/3 skipped (-NoService). Run:  $Py $W run"; exit 0 }
+Write-Host "== 3/3 background task (Task Scheduler, at logon)"
+$Pyw = Join-Path (Split-Path -Parent $Py) 'pythonw.exe'; if (-not (Test-Path $Pyw)) { $Pyw = $Py }
+$Action = New-ScheduledTaskAction -Execute $Pyw -Argument (($PyArgs + @("`"$W`"", 'run')) -join ' ') -WorkingDirectory $Here
+$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+Register-ScheduledTask -TaskName $Svc -Action $Action -Trigger $Trigger -Settings $Settings -Description 'oprn-dots background worker' -Force | Out-Null
+Start-ScheduledTask -TaskName $Svc
+Write-Host "task $Svc registered and started."
 Write-Host ""
-Write-Host "=============================================================="
-Write-Host "1) 에이전트에 붙일 MCP 커넥터 주소 (이 주소가 곧 당신의 열쇠입니다. 남에게 보이지 마세요)"
-Write-Host "=============================================================="
-Write-Host "$Origin/$Key/mcp"
-Write-Host ""
-Write-Host "   - Claude: 설정 > 커넥터 > 사용자 지정 커넥터 추가 > 위 주소 붙여넣기"
-Write-Host "   - Codex / 기타: MCP 서버 추가(Streamable HTTP) > 위 주소"
-Write-Host "   - 닷츠(Dots): 커넥터 추가 > 위 주소"
-Write-Host ""
-Write-Host "=============================================================="
-Write-Host "2) 에이전트에 붙일 상시 지시문 (아래 줄부터 끝까지 통째로 복사)"
-Write-Host "=============================================================="
-Get-Content -Raw -Encoding UTF8 (Join-Path $PSScriptRoot 'AGENT_INSTRUCTIONS.md')
-Write-Host ""
-Write-Host "끝. 에이전트에게 `"get_next_job 으로 작업을 받아서 시작해`" 라고 말하면 됩니다."
+Write-Host "Done. The worker now takes jobs by itself. Log: $CfgDir\worker.log"
+Write-Host "Your key is in $CfgDir\config.json - keep it private; if it leaks, tell the operator."
+Write-Host "status: Get-ScheduledTask $Svc   stop: Unregister-ScheduledTask $Svc"
