@@ -1,0 +1,4 @@
+*.key
+invite*.txt
+workers.json
+.env
