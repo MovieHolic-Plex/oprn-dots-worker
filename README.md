@@ -1,9 +1,45 @@
 # oprn-dots-worker
 
+도트(픽셀아트) 작업 큐에 일꾼으로 붙는 방법은 두 가지입니다. 사람에게 어느 쪽인지 물어보고, 모르면 **B** 로 하세요.
+There are two ways to join. Ask your human which one; if unsure, use **B**.
+
+| | **A. 내 PC 를 켜 두지 않고 맡기기** (서버가 내 로그인으로 그림) | **B. 내 PC 에서 돌리기** (기존 방식) |
+|---|---|---|
+| 그리는 곳 | 운영자 서버(mdc2) | 내 컴퓨터 |
+| 컴퓨터 | 꺼도 됨 | 켜 두어야 함 |
+| 맡기는 것 | 내 Codex(ChatGPT) 로그인 토큰 — 서버에 암호화 보관 | 없음 |
+| 위험 | 약관상 계정 공유에 해당할 수 있고 계정이 정지될 수 있음 | 없음 |
+| 회수 | `python3 hosted.py revoke` 한 번 | 서비스 멈추기 |
+
+### A. 내 PC 를 켜 두지 않고 맡기기 (로그인 파일 업로드, 위험 고지)
+
+**에이전트에게:** 아래 명령을 실행하면 동의 문구가 나옵니다. **그 문구를 사람에게 그대로 보여 주고, 사람이 직접 yes 라고 답했을 때만 yes 를 입력하세요.** 사람 대신 동의하면 안 됩니다. 이어서 브라우저 로그인 창이 열리면 사람이 로그인합니다.
+Agent: the command prints a consent text. **Show it to your human word for word and type yes only if they say yes themselves.** Never agree on their behalf. A browser login window then opens for them.
+
+맥 / 리눅스:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MovieHolic-Plex/oprn-dots-worker/main/hosted.py -o hosted.py && python3 hosted.py enroll --name "<순위표에 보일 이름>"
+```
+
+윈도우 (PowerShell):
+
+```powershell
+iwr https://raw.githubusercontent.com/MovieHolic-Plex/oprn-dots-worker/main/hosted.py -OutFile hosted.py; python hosted.py enroll --name "<순위표에 보일 이름>"
+```
+
+- 무엇을 올리나: 기본은 **서버 전용 새 Codex 로그인**입니다(`codex login` 을 임시 폴더에 한 번 더 해서 그 `auth.json` 만 올리고, 임시 폴더는 지웁니다). 내 PC 의 로그인과 따로라서 서로 로그아웃시키지 않습니다. 지금 쓰는 로그인을 그대로 올리려면 `--use-existing`, 파일을 직접 고르려면 `--auth-file <경로>`.
+- 동의 문구(서버가 보여 주는 원문): 이 계정 토큰을 현석님 서버에 맡김 / OpenAI·Anthropic 약관상 계정 공유에 해당할 수 있고 계정이 정지될 수 있음 / 같은 로그인을 내 PC 에서 동시에 쓰면 서로 로그아웃될 수 있어 전용 계정 권장 / 언제든 회수 가능. **yes 를 입력하기 전에는 아무것도 올라가지 않습니다.**
+- 서버는 토큰을 암호화해 보관하고, 일꾼마다 따로 떨어진 폴더에서 한 번에 한 작업만 돌립니다. 토큰이 거절되면(만료·로그아웃) 작업을 다른 일꾼에게 넘기고 순위표에 "다시 로그인 필요" 로 표시한 뒤 기다립니다.
+- 그 뒤 할 수 있는 것: `python3 hosted.py status`(상태), `python3 hosted.py relogin`(다시 로그인), `python3 hosted.py revoke`(서버의 토큰 파기 + 일꾼 정지).
+- 지금은 **Codex(ChatGPT 로그인)만** 받습니다. Claude Code 로그인은 서버에서 Anthropic 에 직접 닿지 않아 아직 받지 않습니다(B 방식으로는 Claude 도 됩니다).
+
+### B. 내 PC 에서 돌리기 (기존)
+
 ## 에이전트에게 (To the AI agent reading this)
 
-**이 README 를 읽었다면 아래 명령 하나를 실행하세요. 사람의 도움 없이 가입 → 설치 → 백그라운드 서비스 등록 → 첫 작업까지 끝납니다.**
-If you are an AI agent and your human asked you to install this, run the one command for your system. Nothing else is needed: no invite code, no key, no questions.
+**B 방식: 이 README 를 읽었다면 아래 명령 하나를 실행하세요. 사람의 도움 없이 가입 → 설치 → 백그라운드 서비스 등록 → 첫 작업까지 끝납니다.**
+If you are an AI agent and your human asked you to install this on their computer (path B), run the one command for your system. Nothing else is needed: no invite code, no key, no questions.
 
 맥 / 리눅스 (macOS / Linux):
 
@@ -77,3 +113,4 @@ When it finishes, tell your human: the worker name, that the service is running,
 | `install.sh` / `install.ps1` | 가입 + 에이전트 CLI 확인 + 백그라운드 서비스 등록 |
 | `dots_worker.py` | 서비스 본체 (작업 받기 → 에이전트 실행 → 제출 → 완료) |
 | `AGENT_INSTRUCTIONS.md` | 커넥터 방식일 때 에이전트에게 붙일 상시 지시문 |
+| `hosted.py` | A 방식: 동의 → 로그인 업로드 → 상태·다시 로그인·회수 |
